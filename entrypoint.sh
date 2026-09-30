@@ -1,8 +1,8 @@
-#!/bin/bash
+﻿#!/bin/bash
 set -e
 
 # =============================================================================
-# OneLap 多平台数据同步工具 — 容器启动脚本
+# 行者(XOSS)到OneLap数据同步工具 — 容器启动脚本
 #
 # 环境变量:
 #   ONELAP_MODE = sync (默认) | vnc
@@ -89,7 +89,7 @@ fi
 # sync 模式: 跑同步脚本，结束后保持容器存活供 VNC 查看
 echo "sync 模式: 开始执行同步脚本..."
 cd /app
-python3 SyncOnelapToXoss.py &
+python3 SyncXossToOnelap.py &
 PY_PID=$!
 
 # 等待脚本结束，同时处理 SIGTERM 优雅退出

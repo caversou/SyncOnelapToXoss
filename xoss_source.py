@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 行者 (XOSS / imxingzhe.com) 数据源客户端
 
 背景
 ----
-SyncOnelapToXoss 原项目以 OneLap(顽鹿) 为数据源、行者(XOSS) 为下游之一。
+SyncXossToOnelap 原项目以 OneLap(顽鹿) 为数据源、行者(XOSS) 为下游之一。
 本模块把行者变成"数据源"，用于把行者上的骑行记录同步到 OneLap / iGPSport 等平台。
 
 行者网页版内部 API（已通过 www.imxingzhe.com/workouts/{id} 页面前端 bundle 确认）
@@ -359,7 +359,7 @@ def _gpx_time_from_epoch_ms(value):
         return None
 
 
-def build_gpx_xml(points, coords, title='', sport=3, creator='SyncOnelapToXoss'):
+def build_gpx_xml(points, coords, title='', sport=3, creator='SyncXossToOnelap'):
     """由行者 points + polyline 坐标合成 GPX（含心率/踏频/功率扩展）。
 
     points/coords 按索引对应；数量不一致时按较短的截断。

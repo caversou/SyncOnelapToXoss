@@ -1,7 +1,9 @@
-# OneLap平台数据同步工具
+# 行者(XOSS)到OneLap数据同步工具
 # 文件类型：py
-# 文件名称：SyncOnelapToXoss.py
-# 功能：从OneLap平台下载最新运动数据并同步到行者平台和捷安特骑行平台
+# 文件名称：SyncXossToOnelap.py
+# 功能：数据源可在行者(XOSS)与顽鹿(OneLap)之间切换：
+#       行者为源时，同步到 OneLap 与 iGPSport；
+#       顽鹿为源时，同步到 行者 / 捷安特 / iGPSport / Garmin Connect 中国区 / Strava
 import base64
 from math import log
 try:

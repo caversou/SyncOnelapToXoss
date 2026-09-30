@@ -1,7 +1,7 @@
-# OneLap到多平台数据同步工具配置文件（示例）
+﻿# 行者(XOSS)到OneLap数据同步工具配置文件（示例）
 
 [app]
-name = OneLap到多平台数据同步工具
+name = 行者(XOSS)到OneLap数据同步工具
 version = 1.2.16
 log_level = INFO
 headless_mode = false

@@ -1,5 +1,5 @@
-# =============================================================================
-# OneLap 多平台数据同步工具 — 带 VNC 的 Docker 镜像
+﻿# =============================================================================
+# 行者(XOSS)到OneLap数据同步工具 — 带 VNC 的 Docker 镜像
 #
 # 基础镜像: selenium/standalone-chromium（官方维护，内置 Chrome + VNC 组件）
 #
@@ -46,7 +46,7 @@ RUN if [ -n "$PIP_INDEX" ]; then \
         garmin-fit-sdk>=21.0.0
 
 # 复制程序文件
-COPY SyncOnelapToXoss.py /app/
+COPY SyncXossToOnelap.py /app/
 COPY incremental_sync_v2.py /app/
 COPY fit_coord_transform.py /app/
 COPY xoss_source.py /app/

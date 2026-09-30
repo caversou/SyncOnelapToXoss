@@ -1,4 +1,4 @@
-# OneLap到多平台数据同步工具
+# 行者(XOSS)到OneLap数据同步工具
 
 ## 🎯 功能概述
 
@@ -187,7 +187,7 @@ strategy = time_based  # 基于时间戳比对
 # mode = auto
 
 # 2. 运行程序
-python3 SyncOnelapToXoss.py
+python3 SyncXossToOnelap.py
 ```
 
 程序会自动：
@@ -242,7 +242,7 @@ python3 SyncOnelapToXoss.py
     *   用记事本打开，填入您的 OneLap、行者、捷安特、iGPSport 或 Garmin 账号密码。
     *   **注意**：`enable_sync = true` 表示启用该平台的同步。
 3.  **运行程序**：
-    *   双击 `SyncOnelapToXoss.exe`。
+    *   双击 `SyncXossToOnelap.exe`。
     *   程序会自动打开浏览器进行操作，**请勿关闭该浏览器窗口**，等待程序运行结束。
 
 ### 2. 开发者指南 (源码运行)
@@ -261,7 +261,7 @@ python3 SyncOnelapToXoss.py
     *   编辑 `settings.ini` 填入账号信息。
 4.  **运行脚本**：
     ```bash
-    python SyncOnelapToXoss.py
+    python SyncXossToOnelap.py
     ```
 
 ## ⚙️ 业务场景与配置
@@ -348,7 +348,7 @@ Strava 不使用账号密码直接登录同步，而是使用 OAuth 2.0。
 4. 运行以下命令完成首次授权：
 
 ```bash
-python3 SyncOnelapToXoss.py --strava-auth
+python3 SyncXossToOnelap.py --strava-auth
 ```
 
 授权完成后，程序会自动写入：
@@ -363,13 +363,13 @@ python3 SyncOnelapToXoss.py --strava-auth
 测试 token 是否可用：
 
 ```bash
-python3 SyncOnelapToXoss.py --strava-test
+python3 SyncXossToOnelap.py --strava-test
 ```
 
 测试单个 FIT 文件上传：
 
 ```bash
-python3 SyncOnelapToXoss.py --strava-upload-test /path/to/file.fit
+python3 SyncXossToOnelap.py --strava-upload-test /path/to/file.fit
 ```
 
 ### 3. Strava 参与增量同步基准

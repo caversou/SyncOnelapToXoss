@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -37,19 +37,19 @@ Notes:
 pip install -r requirements.txt
 
 # Run the full sync pipeline
-python SyncOnelapToXoss.py
+python SyncXossToOnelap.py
 
 # Strava OAuth first-time authorization
-python SyncOnelapToXoss.py --strava-auth
+python SyncXossToOnelap.py --strava-auth
 
 # Test Strava token validity
-python SyncOnelapToXoss.py --strava-test
+python SyncXossToOnelap.py --strava-test
 
 # Test upload a single FIT file to Strava
-python SyncOnelapToXoss.py --strava-upload-test /path/to/file.fit
+python SyncXossToOnelap.py --strava-upload-test /path/to/file.fit
 
 # Build Windows single-file executable
-pyinstaller -F SyncOnelapToXoss.py --name SyncOnelapToXoss --noconfirm
+pyinstaller -F SyncXossToOnelap.py --name SyncXossToOnelap --noconfirm
 ```
 
 There are no automated tests in this repository. Test scripts (`test_*.py`, `analyze_*.py`, `*_test.py`) are gitignored and used for ad-hoc debugging.
@@ -58,7 +58,7 @@ There are no automated tests in this repository. Test scripts (`test_*.py`, `ana
 
 ### Entry point and code organization
 
-[SyncOnelapToXoss.py](SyncOnelapToXoss.py) (~3600 lines) is the **monolithic main script**. It contains all configuration loading, platform-specific login flows, API clients, and the 10-step sync pipeline inline at module level (no `main()` function wrapper — code after the function definitions runs directly at import time). The script is structured as:
+[SyncXossToOnelap.py](SyncXossToOnelap.py) (~3600 lines) is the **monolithic main script**. It contains all configuration loading, platform-specific login flows, API clients, and the 10-step sync pipeline inline at module level (no `main()` function wrapper — code after the function definitions runs directly at import time). The script is structured as:
 
 1. **Module-level imports and constants** (lines 1–60)
 2. **Config loading** via `configparser` from `settings.ini`, with fallback to hardcoded defaults (lines 66–229)
@@ -94,7 +94,7 @@ The OneLap API uses a custom signature scheme. Key constants:
 - Signing algorithm: `MD5(path + sorted query params + body JSON + signKey)`, communicated via `X-Sign` header
 - Authentication: Bearer token obtained from browser cookies after login, sent as `X-Access-Token` header
 
-Both `SyncOnelapToXoss.py` and `incremental_sync_v2.py` contain independent implementations of the signing functions (`rand_nonce`, `replace_empty_with_none`, `process_sign_params`, `generate_onelap_sign_headers`).
+Both `SyncXossToOnelap.py` and `incremental_sync_v2.py` contain independent implementations of the signing functions (`rand_nonce`, `replace_empty_with_none`, `process_sign_params`, `generate_onelap_sign_headers`).
 
 ### Browser automation
 

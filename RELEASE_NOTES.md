@@ -1,4 +1,4 @@
-# 发布说明
+﻿# 发布说明
 
 ## v1.2.16 (2026-10-01)
 
@@ -184,7 +184,7 @@ python xoss_source_probe.py --browser   # 自动打开浏览器手动登录
 4. **完成首次授权**
    运行以下命令完成 OAuth 授权：
    ```bash
-   python3 SyncOnelapToXoss.py --strava-auth
+   python3 SyncXossToOnelap.py --strava-auth
    ```
 
    程序会自动打开浏览器，你在 Strava 网页上确认授权后，程序会自动保存 token 到 settings.ini。
@@ -193,7 +193,7 @@ python xoss_source_probe.py --browser   # 自动打开浏览器手动登录
 
 首次授权完成后，以后直接运行主程序即可：
 ```bash
-python3 SyncOnelapToXoss.py
+python3 SyncXossToOnelap.py
 ```
 
 程序会自动：
@@ -206,10 +206,10 @@ python3 SyncOnelapToXoss.py
 
 ```bash
 # 测试 token 是否可用
-python3 SyncOnelapToXoss.py --strava-test
+python3 SyncXossToOnelap.py --strava-test
 
 # 测试上传单个文件
-python3 SyncOnelapToXoss.py --strava-upload-test /path/to/file.fit
+python3 SyncXossToOnelap.py --strava-upload-test /path/to/file.fit
 ```
 
 #### 配置说明
@@ -318,7 +318,7 @@ python3 SyncOnelapToXoss.py --strava-upload-test /path/to/file.fit
 4. **完成首次授权**
    运行以下命令完成 OAuth 授权：
    ```bash
-   python3 SyncOnelapToXoss.py --strava-auth
+   python3 SyncXossToOnelap.py --strava-auth
    ```
 
    程序会自动打开浏览器，你在 Strava 网页上确认授权后，程序会自动保存 token 到 settings.ini。
@@ -327,7 +327,7 @@ python3 SyncOnelapToXoss.py --strava-upload-test /path/to/file.fit
 
 首次授权完成后，以后直接运行主程序即可：
 ```bash
-python3 SyncOnelapToXoss.py
+python3 SyncXossToOnelap.py
 ```
 
 程序会自动：
@@ -340,10 +340,10 @@ python3 SyncOnelapToXoss.py
 
 ```bash
 # 测试 token 是否可用
-python3 SyncOnelapToXoss.py --strava-test
+python3 SyncXossToOnelap.py --strava-test
 
 # 测试上传单个文件
-python3 SyncOnelapToXoss.py --strava-upload-test /path/to/file.fit
+python3 SyncXossToOnelap.py --strava-upload-test /path/to/file.fit
 ```
 
 #### 配置说明

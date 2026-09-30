@@ -1,4 +1,4 @@
-name: Build and Release
+﻿name: Build and Release
 
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
       - name: Build Windows executable
         shell: pwsh
         run: |
-          pyinstaller -F SyncOnelapToXoss.py --name SyncOnelapToXoss --noconfirm
+          pyinstaller -F SyncXossToOnelap.py --name SyncXossToOnelap --noconfirm
 
       - name: Prepare package
         shell: pwsh
@@ -47,9 +47,9 @@ jobs:
           if ($refName -like 'refs/tags/*') {
             $refName = $refName -replace 'refs/tags/', ''
           }
-          $packageName = "SyncOnelapToXoss_${refName}_Windows_x86_64"
+          $packageName = "SyncXossToOnelap_${refName}_Windows_x86_64"
           New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item dist/SyncOnelapToXoss.exe package/ -Force
+          Copy-Item dist/SyncXossToOnelap.exe package/ -Force
           if (Test-Path settings.template.ini) {
             Copy-Item settings.template.ini package/settings.ini -Force
           } elseif (Test-Path settings.ini.example) {
@@ -93,15 +93,15 @@ jobs:
 
       - name: Build Linux executable
         run: |
-          pyinstaller -F SyncOnelapToXoss.py --name SyncOnelapToXoss --noconfirm
+          pyinstaller -F SyncXossToOnelap.py --name SyncXossToOnelap --noconfirm
 
       - name: Prepare package
         run: |
           REF_NAME="${GITHUB_REF_NAME#refs/tags/}"
-          PACKAGE_NAME="SyncOneLapToXoss_${REF_NAME}_Linux_x86_64"
+          PACKAGE_NAME="SyncXossToOnelap_${REF_NAME}_Linux_x86_64"
           mkdir -p package
-          cp dist/SyncOneLapToXoss package/ 2>/dev/null || cp dist/SyncOnelapToXoss package/
-          chmod +x package/SyncOneLapToXoss 2>/dev/null || chmod +x package/SyncOnelapToXoss
+          cp dist/SyncXossToOnelap package/ 2>/dev/null || cp dist/SyncXossToOnelap package/
+          chmod +x package/SyncXossToOnelap 2>/dev/null || chmod +x package/SyncXossToOnelap
           if [ -f settings.template.ini ]; then
             cp settings.template.ini package/settings.ini
           elif [ -f settings.ini.example ]; then

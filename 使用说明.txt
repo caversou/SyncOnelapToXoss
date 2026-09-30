@@ -1,4 +1,4 @@
-# SyncOnelapToXoss 使用说明
+﻿# SyncXossToOnelap 使用说明
 
 本工具支持三类同步方向：
 - OneLap → 其他平台（行者 / 捷安特 / iGPSport / Garmin / Strava）
@@ -24,7 +24,7 @@
    - 其他平台按需填写账号密码并打开开关（见下方场景）
 
 4) 运行程序
-   - 双击 SyncOnelapToXoss.exe
+   - 双击 SyncXossToOnelap.exe
    - 程序会自动打开浏览器进行登录与上传，请不要关闭浏览器窗口，等待程序结束
 
 ## 常用场景与配置

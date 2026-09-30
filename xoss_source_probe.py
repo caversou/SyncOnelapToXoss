@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 行者(XOSS)数据源接口探测脚本（零第三方依赖，仅用标准库）
 
 背景
 ----
-SyncOnelapToXoss 原项目以 OneLap(顽鹿) 为数据源、行者(XOSS) 为下游。
+SyncXossToOnelap 原项目以 OneLap(顽鹿) 为数据源、行者(XOSS) 为下游。
 本次改造要把行者变成数据源，需要在真实登录态下确认行者网页版内部 API 的行为。
 
 已从行者前端代码(/workouts/{id} 页面 bundle)确认的接口：
