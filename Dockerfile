@@ -49,6 +49,8 @@ RUN if [ -n "$PIP_INDEX" ]; then \
 COPY SyncOnelapToXoss.py /app/
 COPY incremental_sync_v2.py /app/
 COPY fit_coord_transform.py /app/
+COPY xoss_source.py /app/
+COPY xoss_source_probe.py /app/
 COPY settings.ini.example /app/
 
 # 复制启动脚本

@@ -13,7 +13,7 @@ set -e
 
 # ----- 持久化数据目录（避免 Docker 把单个文件挂载创建成目录）-----
 mkdir -p /app/data
-for f in onelap_download_state.json strava_upload_state.json; do
+for f in onelap_download_state.json strava_upload_state.json xoss_sync_state.json; do
     # 如果旧版本遗留了目录挂载（非 symlink），先移除
     if [ -d "/app/$f" ] && [ ! -L "/app/$f" ]; then
         echo "[FIX] /app/$f 是目录，移除并重建为 symlink"
