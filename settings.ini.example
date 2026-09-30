@@ -2,7 +2,7 @@
 
 [app]
 name = OneLap到多平台数据同步工具
-version = 1.2.13
+version = 1.2.16
 log_level = INFO
 headless_mode = false
 debug_mode = false
@@ -14,7 +14,21 @@ password = your_password_here
 [xoss]
 username = 13800138000
 password = your_password_here
+# 作为“目标平台”时是否上传到行者（data_source = xoss 时行者是数据源，此项不生效）
 enable_sync = false
+# 行者 start_time 是毫秒级 UTC 时间戳，默认 +8 小时换算为北京时间；若时间有偏差可微调
+time_offset_hours = 8
+# 导出运动文件时优先 Fit（含心率/功率/踏频等完整数据），失败时自动回退 GPX
+prefer_fit = true
+# 上传到 OneLap 后是否再做一次“入库时间校验”（两侧时间口径不一致时可能误判，默认关闭）
+verify_onelap_upload = false
+# 试运行：只登录行者并下载记录，不向任何平台上传（首次验证强烈建议先开一次）
+dry_run = false
+# 登录方式：auto=先免浏览器登录(账号密码+RSA)，失败自动回退浏览器（推荐）
+#          browser=只用浏览器登录（与旧行为一致）
+#          http=只用免浏览器登录（适合无图形环境）
+# 注意：免浏览器登录要求 username 填手机号
+login_mode = auto
 
 [giant]
 username = 13800138000
@@ -47,6 +61,9 @@ athlete_name =
 gcj02_to_wgs84 = true
 
 [sync]
+# 数据源：onelap = 顽鹿为源（原逻辑，OneLap → 行者/捷安特/iGPSport/Garmin/Strava）
+#        xoss    = 行者为源（行者 → OneLap / iGPSport）
+data_source = onelap
 storage_dir = ./downloads
 supported_formats = .fit,.gpx,.tcx
 max_file_size_mb = 50

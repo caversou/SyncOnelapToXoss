@@ -2,14 +2,21 @@
 
 ## 🎯 功能概述
 
-从 OneLap (顽鹿) 平台下载运动数据，同步到多个平台：
+支持两种数据源方向，通过 `settings.ini` 的 `[sync] data_source` 切换：
+
+**方向 A（默认，`data_source = onelap`）**：从 OneLap (顽鹿) 平台下载运动数据，同步到多个平台：
 - ✅ 行者 (XOSS)
 - ✅ 捷安特骑行 (Giant)
 - ✅ iGPSport
 - ✅ Garmin Connect 中国区
 - ✅ Strava
 
+**方向 B（`data_source = xoss`）**：从行者 (XOSS) 下载运动数据，同步到：
+- ✅ OneLap (顽鹿)
+- ✅ iGPSport
+
 当前版本已支持：
+- **行者 (XOSS) 作为可选数据源**：登录行者网页版后，调用其内部接口导出原始 Fit 文件，再同步到 OneLap / iGPSport，含增量比对与去重状态记录。
 - OneLap 新版签名 API：使用 token + 签名分页获取活动，并通过 FIT 下载接口拉取运动文件。
 - 正向增量同步：按下游平台最新记录作为同步基准，触达基准后停止翻页，避免重复处理历史数据。
 - OneLap 下载状态记录：已完成下载会记录到 `onelap_download_state.json`，重复运行时可跳过已下载文件。
@@ -19,6 +26,111 @@
 - Strava OAuth 同步：支持首次授权、token 自动刷新、上传测试、重复上传保护和错误分类日志。
 - Strava 坐标转换：上传前自动将 OneLap FIT 文件从 GCJ-02 火星坐标系转为 WGS84，消除轨迹偏移。
 - 打包发布：GitHub Actions 支持 Windows / Linux 构建，推送 `v*` 标签时可自动创建 GitHub Release。
+
+## 🔄 行者 (XOSS) 作为数据源（新增）
+
+### 功能说明
+
+原版本固定以 OneLap(顽鹿) 为数据源。现在可用配置项把 **行者(XOSS) 切换为数据源**，
+把行者上的骑行记录同步到 **OneLap** 与 **iGPSport**，适用于“主力记录在行者、需要补录到顽鹿 / iGPSport”的场景。
+
+### 实现原理
+
+行者网页版运动详情页自带“导出Fit / 导出GPX”按钮，按钮背后的真实请求就是两个 GET 接口：
+
+| 用途 | 接口 | 是否需要登录 |
+|------|------|--------------|
+| 导出 Fit（含心率/功率/踏频等完整数据） | `GET https://www.imxingzhe.com/api/v1/workout/{workoutId}/fit/` | 是 |
+| 导出 GPX | `GET https://www.imxingzhe.com/api/v1/pgworkout/{workoutId}/gpx/` | 是 |
+| 活动详情 | `GET https://www.imxingzhe.com/api/v1/pgworkout/{workoutId}/` | 公开记录免登录 |
+| 活动列表 | `GET https://www.imxingzhe.com/api/v1/pgworkout/?offset=&limit=` | 是 |
+| 月度列表（回退方案） | `GET https://www.imxingzhe.com/api/v4/user_month_info/?user_id=&year=&month=` | 是 |
+
+程序流程：DrissionPage 登录行者网页版 → 复用登录 Cookie 调用上述接口 → 下载 Fit 文件 →
+复用项目已有的 OneLap Fit 直传接口（`jilu0`）与 iGPSport 网页导入完成上传。
+
+> 也就是说，程序走的是“导出 Fit”按钮背后的同一个地址，比模拟点击 DOM 更稳定。
+
+### 配置方法
+
+```ini
+[sync]
+data_source = xoss        # onelap(默认，顽鹿为源) / xoss(行者为源)
+
+[xoss]
+username = 行者手机号     # 免浏览器登录要求填手机号
+password = 行者密码
+time_offset_hours = 8     # 行者时间戳为 UTC 毫秒，默认 +8 换算北京时间
+prefer_fit = true         # 优先导出 Fit，失败时自动回退 GPX
+verify_onelap_upload = false
+dry_run = false           # true=只下载不上传，用于首次验证
+login_mode = auto         # auto(默认) / browser / http
+
+[onelap]
+username = 顽鹿账号        # 此时作为上传目标
+password = 顽鹿密码
+
+[igpsport]
+username = iGPSport账号
+password = iGPSport密码
+enable_sync = true        # 作为上传目标需开启
+```
+
+### 两种登录方式
+
+| `login_mode` | 行为 |
+|---|---|
+| `auto`（默认） | 先用「账号密码 + RSA 加密」直接调接口登录；失败自动回退浏览器登录 |
+| `browser` | 只用浏览器（DrissionPage）登录，与旧行为一致 |
+| `http` | 只用免浏览器登录，适合无图形界面的环境（服务器 / Docker） |
+
+免浏览器登录复现的是行者网页版自身的登录流程：
+
+- 密码使用与前端**同一把 RSA 公钥**（1024-bit，PKCS#1 v1.5）加密，纯 Python 实现，**不需要额外依赖**
+- `POST /api/v1/user/login/`，body `{"account": 手机号, "password": 加密串}`，响应 `code == 0` 即成功
+- 成功后服务端下发 `sessionid`，后续所有接口直接复用
+
+> 接口会校验 `account` 必须是**手机号**格式；若你的账号是邮箱，请保持 `login_mode = auto`（会自动回退浏览器）。
+
+### 增量与去重规则
+
+- **下载下限** = 各目标平台最新记录时间中**最早**的一个，保证不漏记录
+- 每条记录**按平台分别判断**：不晚于该平台最新时间的记录会跳过
+- 上传成功的记录写入 `xoss_sync_state.json`，重复运行不会重复上传
+- 若两个目标平台都取不到基准时间，程序默认终止（避免误触发全量重复上传）；确认要全量同步时设置 `[sync] onelap_full_sync = true`
+
+### 注意事项
+
+- **首次使用建议先试运行**：把 `[xoss] dry_run = true`，程序只登录行者并下载记录到 `downloads/xoss`，不向任何平台上传；此时即使还没配好 OneLap / iGPSport 也能验证（无基准时只取最近 10 条）。确认下载的时间、距离与文件正常后，再改为 `false`。
+- 只有**设备来源**的记录（详情中 `equipment_info` 非空）才能导出 Fit；其余记录会自动尝试 GPX。
+  GPX 无法直传 OneLap（OneLap 直传接口要求 Fit 文件），这类记录会记录失败日志。
+- 行者时间戳时区若与你的平台口径不一致（导致增量比对异常），可用 `[xoss] time_offset_hours` 微调。
+- 提供只读探测脚本，便于排查接口状态：
+
+  ```bash
+  # 用浏览器 Cookie 探测（推荐）
+  python xoss_source_probe.py --cookie "sessionid=xxxx"
+  # 或自动打开浏览器手动登录后探测
+  python xoss_source_probe.py --browser
+  ```
+
+### 常见问题（行者数据源）
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| 程序能打开行者网页，但日志显示请求失败 / `401`、`403` | 浏览器可能走了系统代理，而 Python 直连被拦；或标准库证书链异常 | 用主程序自带的 `requests` 链路（正常同步流程即是）；探测时改用 `--browser` 模式 |
+| 日志提示 `仅取得 GPX，OneLap 直传接口要求 Fit` | 该记录不是设备来源（详情中 `equipment_info` 为空），行者不提供 Fit 导出 | 属预期行为；该记录仍会尝试同步到 iGPSport |
+| 下载记录的时间与页面显示差 8 小时 | 时区口径不一致（行者时间戳是 UTC） | 调整 `[xoss] time_offset_hours`（默认 8） |
+| 想先确认再上传 | — | 设置 `[xoss] dry_run = true`，只下载不上传 |
+| 重复运行会不会重复上传 | — | 不会：已成功记录写入 `xoss_sync_state.json`，且按平台逐条判断 |
+
+排查接口可用只读脚本（不改动任何数据）：
+
+```bash
+python xoss_source_probe.py --cookie "sessionid=xxxx"   # 有 Cookie 时
+python xoss_source_probe.py --browser                   # 自动开浏览器登录
+python xoss_source_probe.py --insecure                  # 排除证书链问题
+```
 
 ## 🎉 新增功能：iGPSport → OneLap 反向增量同步
 
@@ -325,6 +437,14 @@ pip install -r requirements.txt
 ## 📝 版本历史
 
 完整发布说明见 [`RELEASE_NOTES.md`](./RELEASE_NOTES.md)。README 仅保留主要功能和关键修复摘要。
+
+### v1.2.16 (2026-10-01)
+- ✅ 新增「行者 (XOSS) 作为数据源」能力：设置 `[sync] data_source = xoss` 即可把数据源从顽鹿切换为行者，同步到 OneLap 与 iGPSport。
+- ✅ 行者侧直接复用网页版「导出Fit」按钮背后的接口 `GET /api/v1/workout/{id}/fit/` 获取原始 Fit 文件（含心率/功率/踏频），失败时自动回退 GPX。
+- ✅ 增量与去重：以各目标平台最新记录时间中**最早者**作为下载下限，逐平台跳过已存在记录；成功记录写入 `xoss_sync_state.json`。
+- ✅ 新增只读接口探测脚本 `xoss_source_probe.py`，便于排查行者接口与登录态问题。
+- ✅ `settings.ini.example`、README、使用说明同步补充行者数据源配置。
+- ✅ 原「OneLap 为数据源」链路保持不变，两种方向由配置项切换。
 
 ### v1.2.15 (2026-07-07)
 - ✅ 新增 Strava 坐标自动修正功能：OneLap 的国内坐标系（GCJ-02）→ Strava 的国际标准坐标系（WGS84），解决轨迹偏移 50-500 米的问题。

@@ -4,7 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A Python tool that downloads cycling workout data from OneLap (顽鹿) and syncs it to multiple platforms: XOSS (行者), Giant (捷安特骑行), iGPSport, Garmin Connect China, and Strava. It also supports reverse incremental sync from iGPSport back to OneLap.
+A Python tool that synchronizes cycling workout data between Chinese cycling platforms. The data-source direction is switchable via `[sync] data_source` in `settings.ini`:
+
+- **`onelap` (default)** — downloads from OneLap (顽鹿) and pushes to XOSS (行者), Giant (捷安特骑行), iGPSport, Garmin Connect China, and Strava. Also supports reverse incremental sync from iGPSport back to OneLap.
+- **`xoss`** — uses XOSS (行者) as the data source: logs into the XOSS web UI, exports the original FIT file per activity, and uploads to OneLap and iGPSport.
+
+### XOSS as a data source
+
+[xoss_source.py](xoss_source.py) implements `XossClient`, a Cookie-authenticated client for the XOSS web internal API. Endpoints were confirmed by reading the `/workouts/{id}` page bundle:
+
+| Purpose | Endpoint |
+|---|---|
+| Export FIT (the "导出Fit" button href) | `GET /api/v1/workout/{workout_id}/fit/` |
+| Export GPX (the "导出GPX" button href) | `GET /api/v1/pgworkout/{workout_id}/gpx/` |
+| Activity detail (public records need no login) | `GET /api/v1/pgworkout/{workout_id}/` |
+| Activity list | `GET /api/v1/pgworkout/?offset=&limit=` |
+| Monthly list (fallback) | `GET /api/v4/user_month_info/?user_id=&year=&month=` |
+
+Notes:
+- XOSS `start_time` is a **UTC** millisecond timestamp; +8h yields the Beijing time shown on the site. Verified: `224048647` → `1790771700000` → 20:35, matching the "晚上 骑行" title and the 21:45 upload stamp. `[xoss] time_offset_hours` tunes this.
+- Only device-sourced records (`equipment_info` non-empty in the detail payload) can export FIT; otherwise the client falls back to GPX, which OneLap's direct-upload API (`jilu0`, FIT-only) rejects.
+- Incremental rule: the download floor is the **earliest** latest-activity time across target platforms; each target is then skipped individually. Successful uploads are recorded in `xoss_sync_state.json`.
+- The XOSS entry point is an early branch in the main script: when `data_source = xoss`, `run_xoss_source_pipeline(tab)` runs and the process exits before the OneLap steps 1–10.
+- `xoss_source_probe.py` is a read-only diagnostic script; it can authenticate via `--cookie`, `--browser`, or `--account/--password`.
+- Login: `[xoss] login_mode` selects `auto` (HTTP first, browser fallback) / `browser` / `http`. The browser-less path reproduces the site's own login — RSA-encrypt the password with the public key hardcoded in `home/static/js/app.*.js` (`window.Vue.prototype.$getRsaCode`, 1024-bit, PKCS#1 v1.5, reimplemented dependency-free as `xoss_rsa_encrypt`) and POST `{account, password}` to `/api/v1/user/login/`; success is `code == 0`, then the server issues `sessionid`. Account must be a mobile number.
+- Third data path: `/api/v1/pgworkout/{id}/points/` is readable **without login** and returns `{points:[{heartrate,power,time,altitude,speed,cadence}], encoding_points:<Google polyline>}`. `decode_polyline` + `build_gpx_xml` turn that into GPX, used as the last-resort fallback when the FIT and GPX endpoints are unavailable. Verified on real data: 4127 points ↔ 4127 coords around Liuzhou.
 
 ## Commands
 
@@ -87,7 +111,8 @@ The tool uses **DrissionPage** (not Selenium) to control a Chromium browser. The
 - `[app]` — log level, headless mode toggle
 - `[onelap]`, `[xoss]`, `[giant]`, `[igpsport]`, `[garmin]` — per-platform credentials and `enable_sync` flags
 - `[strava]` — OAuth 2.0 credentials (auto-written after first authorization)
-- `[sync]` — storage directory, file format whitelist, max file size, batch size, `onelap_full_sync` flag
+- `[sync]` — storage directory, file format whitelist, max file size, batch size, `onelap_full_sync` flag, and `data_source` (`onelap`/`xoss`)
+- `[xoss]` — also holds data-source tuning for `data_source = xoss`: `time_offset_hours` (default 8), `prefer_fit` (default true), `verify_onelap_upload` (default false)
 - `[igpsport_to_onelap]` — reverse sync toggle, mode (`auto`/`full`), strategy
 
 ### Packaging
@@ -100,9 +125,9 @@ GitHub Actions ([.github/workflows/build-release.yml](.github/workflows/build-re
 
 ### Important gitignore patterns
 
-- `settings.local.ini`, `strava_upload_state.json`, `onelap_download_state.json` — contain real credentials/tokens, must not be committed
+- `settings.local.ini`, `strava_upload_state.json`, `onelap_download_state.json`, `xoss_sync_state.json` — contain real credentials/tokens, must not be committed
 - `test_*.py`, `analyze_*.py`, `*_test.py` — ad-hoc test/debug scripts excluded from version control
-- `downloads/`, `download_igps/`, `dist/`, `build/` — generated/transient directories
+- `downloads/`, `download_igps/`, `xoss_probe_out/`, `dist/`, `build/` — generated/transient directories
 
 ### Key dependencies
 

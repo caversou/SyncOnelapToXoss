@@ -4,17 +4,34 @@
 # 功能：从OneLap平台下载最新运动数据并同步到行者平台和捷安特骑行平台
 import base64
 from math import log
-from DrissionPage import ChromiumPage, ChromiumOptions
+try:
+    from DrissionPage import ChromiumPage, ChromiumOptions
+    DRISSIONPAGE_AVAILABLE = True
+except ImportError as _drission_err:
+    DRISSIONPAGE_AVAILABLE = False
+    ChromiumPage = None
+    ChromiumOptions = None
+    print(f"[WARN]未安装 DrissionPage（{_drission_err}）；浏览器相关功能不可用")
+    print("      完整功能请执行: pip install -r requirements.txt")
+    print("      仅验证行者数据源可零依赖运行：data_source=xoss + login_mode=http + dry_run=true")
 import os
 import time
 import re
 from datetime import datetime
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
+    print("[WARN]未安装 requests；行者数据源会自动使用标准库 HTTP 后端，其它功能不可用")
 import hashlib
 import logging
 import random
 import shutil
-from bs4 import BeautifulSoup  # 添加BeautifulSoup用于HTML解析
+try:
+    from bs4 import BeautifulSoup  # 添加BeautifulSoup用于HTML解析
+except ImportError:
+    BeautifulSoup = None
+    print("[WARN]未安装 bs4（BeautifulSoup）；页面解析相关功能不可用")
 import string
 from urllib.parse import unquote, urlparse, quote
 import threading
@@ -47,6 +64,9 @@ APP_DIR = get_app_dir()
 CONFIG_FILE_PATH = os.path.join(APP_DIR, 'settings.ini')
 STRAVA_STATE_FILE = os.path.join(APP_DIR, 'strava_upload_state.json')
 ONELAP_DOWNLOAD_STATE_FILE = os.path.join(APP_DIR, 'onelap_download_state.json')
+XOSS_SYNC_STATE_FILE = os.path.join(APP_DIR, 'xoss_sync_state.json')
+# 行者数据源试运行模式：无基准时最多下载多少条记录用于验证
+XOSS_DRY_RUN_MAX_ITEMS = 10
 ONELAP_BASE_WEB_URL = 'https://www.onelap.cn'
 ONELAP_BASE_APP_URL = 'https://u.onelap.cn'
 ONELAP_RECORD_PAGE_URL = f'{ONELAP_BASE_APP_URL}/recordPage'
@@ -64,11 +84,23 @@ GARMIN_LOGIN_WAIT_SECONDS = 180
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 try:
-    from incremental_sync_v2 import IncrementalSync
+    from incremental_sync_v2 import IncrementalSync, OneLapClient
     INCREMENTAL_SYNC_AVAILABLE = True
 except ImportError as e:
     INCREMENTAL_SYNC_AVAILABLE = False
     print(f"[WARN]增量同步模块未加载: {e}")
+
+# ===== 新增：导入行者(XOSS)数据源模块 =====
+try:
+    from xoss_source import (
+        XossClient,
+        filter_incremental,
+        pick_download_floor,
+    )
+    XOSS_SOURCE_AVAILABLE = True
+except ImportError as e:
+    XOSS_SOURCE_AVAILABLE = False
+    print(f"[WARN]行者数据源模块未加载: {e}")
 
 
 def load_config_from_ini(config_file=CONFIG_FILE_PATH):
@@ -119,6 +151,22 @@ def load_config_from_ini(config_file=CONFIG_FILE_PATH):
         cfg['MAX_FILE_SIZE'] = config.getint('sync', 'max_file_size_mb', fallback=50) * 1024 * 1024
         cfg['MAX_FILES_PER_BATCH'] = config.getint('sync', 'max_files_per_batch', fallback=5)
         cfg['ONELAP_FULL_SYNC'] = config.getboolean('sync', 'onelap_full_sync', fallback=False)
+
+        # ===== 新增：数据源切换与行者(XOSS)数据源配置 =====
+        # data_source = onelap（默认，顽鹿为源）/ xoss（行者为源）
+        cfg['DATA_SOURCE'] = config.get('sync', 'data_source', fallback='onelap').strip().lower() or 'onelap'
+        # 行者 start_time 为 UTC 毫秒，默认 +8 小时换算为北京时间
+        cfg['XOSS_TIME_OFFSET_HOURS'] = config.getfloat('xoss', 'time_offset_hours', fallback=8)
+        # 行者记录优先导出 Fit，失败时回退 GPX
+        cfg['XOSS_PREFER_FIT'] = config.getboolean('xoss', 'prefer_fit', fallback=True)
+        # 上传 OneLap 后是否做“入库时间校验”（时间口径不一致时可能误判，默认关闭）
+        cfg['XOSS_VERIFY_ONELAP_UPLOAD'] = config.getboolean('xoss', 'verify_onelap_upload', fallback=False)
+        # 试运行：只拉取行者记录并下载文件，不做任何上传（首次验证推荐）
+        cfg['XOSS_DRY_RUN'] = config.getboolean('xoss', 'dry_run', fallback=False)
+        # 行者登录方式：auto=先试免浏览器登录，失败回退浏览器；browser=只用浏览器；http=只用免浏览器
+        cfg['XOSS_LOGIN_MODE'] = config.get('xoss', 'login_mode', fallback='auto').strip().lower() or 'auto'
+        # 本次最多同步多少条（0=不限制）；用于小批量试跑，避免一次上传过多
+        cfg['XOSS_MAX_SYNC_ITEMS'] = config.getint('xoss', 'max_sync_items', fallback=0)
         
         # ===== 新增：iGPSport → OneLap 反向增量同步配置 =====
         # 使用独立的配置节 [igpsport_to_onelap]
@@ -170,6 +218,23 @@ if ini_config:
     MAX_FILE_SIZE = ini_config['MAX_FILE_SIZE']
     MAX_FILES_PER_BATCH = ini_config['MAX_FILES_PER_BATCH']
     ONELAP_FULL_SYNC = ini_config.get('ONELAP_FULL_SYNC', False)
+
+    # ===== 新增：数据源切换（onelap / xoss）与行者数据源参数 =====
+    DATA_SOURCE = ini_config.get('DATA_SOURCE', 'onelap')
+    XOSS_TIME_OFFSET_HOURS = ini_config.get('XOSS_TIME_OFFSET_HOURS', 8)
+    XOSS_PREFER_FIT = ini_config.get('XOSS_PREFER_FIT', True)
+    XOSS_VERIFY_ONELAP_UPLOAD = ini_config.get('XOSS_VERIFY_ONELAP_UPLOAD', False)
+    XOSS_DRY_RUN = ini_config.get('XOSS_DRY_RUN', False)
+    XOSS_LOGIN_MODE = ini_config.get('XOSS_LOGIN_MODE', 'auto')
+    if XOSS_LOGIN_MODE not in ('auto', 'browser', 'http'):
+        print(f"[WARN]未知的 [xoss] login_mode '{XOSS_LOGIN_MODE}'，已回退为 auto")
+        XOSS_LOGIN_MODE = 'auto'
+    XOSS_MAX_SYNC_ITEMS = ini_config.get('XOSS_MAX_SYNC_ITEMS', 0)
+    if DATA_SOURCE not in ('onelap', 'xoss'):
+        print(f"[WARN]未知的数据源 '{DATA_SOURCE}'，已回退为 onelap")
+        DATA_SOURCE = 'onelap'
+    if DATA_SOURCE == 'xoss':
+        print("[INFO]数据源模式: 行者(XOSS) → 目标平台")
     
     # ===== 新增：读取 iGPSport → OneLap 反向增量同步配置 =====
     IGPSPORT_TO_ONELAP_ENABLE = ini_config.get('IGPSPORT_TO_ONELAP_ENABLE', False)
@@ -235,6 +300,15 @@ else:
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     MAX_FILES_PER_BATCH = 5
     ONELAP_FULL_SYNC = False
+
+    # ===== 新增：数据源切换（onelap / xoss）与行者数据源参数 =====
+    DATA_SOURCE = 'onelap'
+    XOSS_TIME_OFFSET_HOURS = 8
+    XOSS_PREFER_FIT = True
+    XOSS_VERIFY_ONELAP_UPLOAD = False
+    XOSS_DRY_RUN = False
+    XOSS_LOGIN_MODE = 'auto'
+    XOSS_MAX_SYNC_ITEMS = 0
     
     # ===== 新增：iGPSport → OneLap 反向增量同步默认配置 =====
     IGPSPORT_TO_ONELAP_ENABLE = False      # 默认禁用反向同步
@@ -3067,6 +3141,385 @@ def upload_files_to_giant(tab, valid_files):
         logger.error(f"上传到捷安特平台失败: {e}")
         return False
 
+
+# ============================================================
+# 行者(XOSS) 作为数据源的同步流程
+# ============================================================
+
+def login_xoss_browser(tab, account, password):
+    """登录行者(XOSS)网页版；已登录或登录成功后返回 True"""
+    logger.info("===== 行者(XOSS) 登录 =====")
+    try:
+        tab.get('https://www.imxingzhe.com/login')
+        time.sleep(2)
+    except Exception as e:
+        logger.error(f"打开行者登录页失败: {e}")
+        return False
+
+    if not is_xoss_login_page(tab) and 'login' not in (tab.url or '').lower():
+        logger.info("检测到行者已是登录态")
+        return True
+
+    # 勾选用户协议（部分页面存在）
+    try:
+        checkbox = tab.ele('.van-checkbox', timeout=2)
+        if checkbox:
+            checkbox.click()
+    except Exception:
+        pass
+
+    try:
+        account_ele = tab.ele('@name=account', timeout=10)
+    except Exception:
+        account_ele = None
+
+    if account_ele is None:
+        # 页面上没有账号输入框：多数情况说明已经处于登录态
+        if not is_xoss_login_page(tab):
+            logger.info("未发现登录表单且当前不在登录页，视为已登录")
+            return True
+        logger.error("未找到行者账号输入框，无法完成登录")
+        return False
+
+    try:
+        account_ele.clear()
+        account_ele.input(account)
+        password_ele = tab.ele('@name=password', timeout=10)
+        password_ele.clear()
+        password_ele.input(password)
+    except Exception as e:
+        logger.error(f"行者登录表单填写失败: {e}")
+        return False
+
+    clicked = click_xoss_login_button(tab)
+    logger.info(f"行者登录按钮点击方式: {clicked}")
+
+    if wait_xoss_login_success(tab, timeout=15) or not is_xoss_login_page(tab):
+        logger.info("行者登录成功")
+        return True
+
+    logger.error(f"行者登录失败，当前 URL: {tab.url}")
+    return False
+
+
+def load_xoss_sync_state(state_file=XOSS_SYNC_STATE_FILE):
+    """读取行者数据源同步状态（记录每条记录已上传到哪些目标平台）"""
+    if not os.path.exists(state_file):
+        return {'uploads': {}}
+    try:
+        with open(state_file, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return {'uploads': {}}
+        if not isinstance(data.get('uploads'), dict):
+            data['uploads'] = {}
+        return data
+    except Exception as e:
+        logger.warning(f"读取行者同步状态失败: {e}")
+        return {'uploads': {}}
+
+
+def save_xoss_sync_state(state, state_file=XOSS_SYNC_STATE_FILE):
+    """保存行者数据源同步状态"""
+    try:
+        with open(state_file, 'w', encoding='utf-8') as fh:
+            json.dump(state, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"保存行者同步状态失败: {e}")
+
+
+def run_xoss_source_pipeline(tab):
+    """行者(XOSS) → OneLap / iGPSport 数据源同步主流程"""
+    logger.info("=" * 70)
+    logger.info("数据源模式：行者(XOSS) → 目标平台")
+    logger.info("=" * 70)
+
+    if not XOSS_SOURCE_AVAILABLE:
+        logger.critical("行者数据源模块(xoss_source.py)未加载，无法执行")
+        return False
+
+    if not (XOSS_ACCOUNT and XOSS_PASSWORD and XOSS_ACCOUNT not in ['139xxxxxx', ''] and XOSS_PASSWORD not in ['xxxxxx', '']):
+        logger.critical("未配置行者账号密码，无法以行者为数据源")
+        return False
+
+    # ---------- 1. 登录行者并建立 API 客户端 ----------
+    client = None
+
+    if XOSS_LOGIN_MODE in ('auto', 'http'):
+        logger.info("尝试免浏览器登录行者（账号密码 + RSA 加密）...")
+        try:
+            http_client = XossClient(time_offset_hours=XOSS_TIME_OFFSET_HOURS)
+            if http_client.login_with_password(XOSS_ACCOUNT, XOSS_PASSWORD):
+                client = http_client
+            else:
+                logger.info("免浏览器登录未成功")
+        except Exception as e:
+            logger.warning(f"免浏览器登录异常: {e}")
+
+    if client is None:
+        if XOSS_LOGIN_MODE == 'http':
+            logger.critical("配置为仅使用免浏览器登录（[xoss] login_mode = http），但登录失败")
+            return False
+        if tab is None:
+            logger.critical("免浏览器登录失败，且当前没有可用浏览器（未安装 DrissionPage）")
+            return False
+        logger.info("改用浏览器登录行者...")
+        if not login_xoss_browser(tab, XOSS_ACCOUNT, XOSS_PASSWORD):
+            logger.critical("行者登录失败，流程终止")
+            return False
+        client = XossClient.from_tab(tab, time_offset_hours=XOSS_TIME_OFFSET_HOURS)
+
+    if not client.get_user_id():
+        logger.warning("未能获取行者用户 id，活动列表接口可能不可用")
+
+    # ---------- 2. 目标平台与增量基准 ----------
+    targets = {}
+    onelap_client = None
+
+    if tab is None:
+        logger.info("[试运行] 未启动浏览器，跳过目标平台基准探测，仅验证行者侧拉取与下载")
+
+    if tab is not None and ONELAP_ACCOUNT and ONELAP_PASSWORD and ONELAP_ACCOUNT not in ['139xxxxxx', ''] and ONELAP_PASSWORD not in ['xxxxxx', '']:
+        try:
+            if not INCREMENTAL_SYNC_AVAILABLE:
+                raise RuntimeError("增量同步模块不可用（缺少 OneLap Fit 直传能力）")
+            # xoss 数据源模式下跳过了原步骤1，浏览器尚未登录 OneLap，必须先显式登录
+            logger.info("登录 OneLap（作为上传目标）...")
+            onelap_auth = login_onelap_browser(tab, ONELAP_ACCOUNT, ONELAP_PASSWORD)
+            if not (onelap_auth or {}).get('token'):
+                raise RuntimeError("OneLap 登录未取得 token")
+            onelap_client = OneLapClient(ONELAP_ACCOUNT, ONELAP_PASSWORD, tab=tab, owns_tab=False)
+            if onelap_client.login():
+                latest = None
+                try:
+                    latest = onelap_client.get_latest_activity_time()
+                except Exception as e:
+                    logger.warning(f"读取 OneLap 最新记录失败: {e}")
+                targets['onelap'] = latest
+                logger.info(f"[基准] OneLap 最新记录: {latest.strftime('%Y-%m-%d %H:%M:%S') if latest else '无记录'}")
+            else:
+                logger.warning("OneLap 登录失败，本次跳过 OneLap 目标")
+        except Exception as e:
+            logger.error(f"OneLap 目标初始化失败: {e}")
+
+    if tab is not None and IGPSPORT_ENABLE_SYNC and IGPSPORT_ACCOUNT and IGPSPORT_PASSWORD and IGPSPORT_ACCOUNT not in ['139xxxxxx', ''] and IGPSPORT_PASSWORD not in ['xxxxxx', '']:
+        try:
+            login_igpsport_browser(tab, IGPSPORT_ACCOUNT, IGPSPORT_PASSWORD)
+            result = get_latest_activity_igpsport(tab)
+            if result and not result.get('is_empty') and result.get('time_obj'):
+                targets['igpsport'] = result['time_obj']
+                logger.info(f"[基准] iGPSport 最新记录: {result['time_obj'].strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                targets['igpsport'] = None
+                logger.info("[基准] iGPSport 无记录，将按首次同步处理")
+        except Exception as e:
+            logger.error(f"iGPSport 目标初始化失败: {e}")
+
+    if not targets:
+        if XOSS_DRY_RUN:
+            logger.info("[试运行] 未配置任何目标平台，仍会拉取行者记录用于验证")
+        else:
+            logger.critical("没有可用的目标平台，请检查 [onelap] 与 [igpsport] 配置")
+            return False
+
+    # ---------- 3. 计算下载下限 ----------
+    download_floor = pick_download_floor(targets.values()) if targets else None
+    if download_floor is None:
+        if XOSS_DRY_RUN:
+            logger.info("[试运行] 无可用基准，将只拉取最近若干条记录用于验证")
+        elif ONELAP_FULL_SYNC:
+            logger.warning("未取到任何目标平台基准时间，但 onelap_full_sync=true，执行全量同步")
+        else:
+            logger.critical(
+                "未能取到任何目标平台的最新记录时间；为避免重复上传，"
+                "确认要全量同步时请设置 [sync] onelap_full_sync = true 后重试"
+            )
+            return False
+    else:
+        logger.info(f"[基准] 行者侧下载下限: {download_floor.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # ---------- 4. 拉取行者活动列表 ----------
+    activities, _reach_limit = client.list_activities(stop_before=download_floor)
+    if not activities:
+        logger.info("行者没有取到活动记录，流程结束")
+        return True
+
+    incremental = filter_incremental(activities, download_floor)
+    if XOSS_DRY_RUN and download_floor is None and len(incremental) > XOSS_DRY_RUN_MAX_ITEMS:
+        logger.info(f"[试运行] 无基准，仅取最近 {XOSS_DRY_RUN_MAX_ITEMS} 条记录用于验证")
+        incremental = incremental[:XOSS_DRY_RUN_MAX_ITEMS]
+    if XOSS_MAX_SYNC_ITEMS > 0 and len(incremental) > XOSS_MAX_SYNC_ITEMS:
+        logger.warning(
+            f"[限制] [xoss] max_sync_items = {XOSS_MAX_SYNC_ITEMS}，本次只处理前 {XOSS_MAX_SYNC_ITEMS} 条"
+        )
+        incremental = incremental[:XOSS_MAX_SYNC_ITEMS]
+    logger.info(f"行者活动共 {len(activities)} 条，需要处理 {len(incremental)} 条")
+
+    state = load_xoss_sync_state()
+    uploads_state = state.setdefault('uploads', {})
+    storage_dir = os.path.join(STORAGE_DIR, 'xoss')
+    ensure_storage_dir(storage_dir)
+
+    # ---------- 5. 下载运动文件 ----------
+    downloaded = []
+    for activity in incremental:
+        workout_id = activity['workout_id']
+        start_time = activity.get('start_time')
+        record = uploads_state.get(workout_id) or {}
+        pending_targets = [name for name in targets if not record.get(name)]
+        if targets and not pending_targets:
+            logger.info(f"[跳过] 行者记录 {workout_id} 已同步到全部目标平台")
+            continue
+        if not pending_targets:
+            # 试运行且未配置目标平台：仍需下载文件用于验证
+            pending_targets = ['dry-run']
+
+        distance_km = round((activity.get('distance_m') or 0) / 1000, 2)
+        time_text = start_time.strftime('%Y-%m-%d %H:%M:%S') if start_time else '未知时间'
+        logger.info(f"[下载] {workout_id} {time_text} {distance_km}km -> 目标: {','.join(pending_targets)}")
+
+        file_stem = f"{start_time.strftime('%Y%m%d_%H%M%S')}_{workout_id}" if start_time else f"xoss_{workout_id}"
+
+        # 复用本地已下载的同名文件，避免重复请求行者接口（也降低被限流的风险）
+        cached_fit = os.path.join(storage_dir, f"{file_stem}.fit")
+        cached_gpx = os.path.join(storage_dir, f"{file_stem}.gpx")
+        if os.path.exists(cached_fit) and os.path.getsize(cached_fit) > 14:
+            logger.info(f"[缓存] 复用已下载文件 {os.path.basename(cached_fit)}")
+            downloaded.append((activity, cached_fit, 'fit'))
+            continue
+        if os.path.exists(cached_gpx) and os.path.getsize(cached_gpx) > 0:
+            logger.info(f"[缓存] 复用已下载文件 {os.path.basename(cached_gpx)}")
+            downloaded.append((activity, cached_gpx, 'gpx'))
+            continue
+
+        path, fmt = client.download_activity(
+            workout_id, storage_dir, prefer_fit=XOSS_PREFER_FIT, filename=file_stem,
+            title=activity.get('title') or None,
+        )
+        if not path:
+            logger.warning(f"[下载失败] 行者记录 {workout_id} 无法导出 Fit/GPX，跳过")
+            continue
+        downloaded.append((activity, path, fmt))
+
+    logger.info(f"本次下载完成 {len(downloaded)} 个文件")
+
+    # ---------- 试运行模式：只下载不上传 ----------
+    if XOSS_DRY_RUN:
+        logger.info("=" * 70)
+        logger.info("[试运行] 已启用 [xoss] dry_run = true，跳过全部上传")
+        for activity, path, fmt in downloaded:
+            start_time = activity.get('start_time')
+            time_text = start_time.strftime('%Y-%m-%d %H:%M:%S') if start_time else '未知时间'
+            distance_km = round((activity.get('distance_m') or 0) / 1000, 2)
+            logger.info(f"  - {time_text}  {distance_km}km  {os.path.basename(path)}  ({fmt})")
+        logger.info(f"文件目录: {os.path.abspath(storage_dir)}")
+        logger.info("确认无误后，把 [xoss] dry_run 改为 false 即可真正上传")
+        logger.info("=" * 70)
+        return True
+
+    # ---------- 6. 上传到目标平台 ----------
+    summary = {
+        'onelap': {'ok': 0, 'skip': 0, 'fail': 0},
+        'igpsport': {'ok': 0, 'skip': 0, 'fail': 0},
+    }
+    igpsport_pending = []
+
+    # 6.1 OneLap：FIT 直传接口逐条上传（需要浏览器停留在 OneLap 域以刷新 token）
+    if 'onelap' in targets and onelap_client:
+        for activity, path, fmt in downloaded:
+            workout_id = activity['workout_id']
+            start_time = activity.get('start_time')
+            record = uploads_state.setdefault(workout_id, {})
+            if record.get('onelap'):
+                continue
+
+            base = targets.get('onelap')
+            if base and start_time and start_time <= base:
+                logger.info(f"[OneLap] 跳过 {workout_id}（不晚于平台最新记录）")
+                summary['onelap']['skip'] += 1
+                continue
+
+            if fmt != 'fit':
+                logger.warning(f"[OneLap] {workout_id} 仅取得 GPX，OneLap 直传接口要求 Fit，跳过")
+                summary['onelap']['fail'] += 1
+                continue
+
+            logger.info(f"[OneLap] 上传 {os.path.basename(path)}")
+            expected = start_time if XOSS_VERIFY_ONELAP_UPLOAD else None
+            try:
+                ok = onelap_client.upload_file(path, expected_time=expected)
+            except Exception as e:
+                logger.error(f"[OneLap] 上传异常 {workout_id}: {e}")
+                ok = False
+
+            if ok:
+                record['onelap'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                summary['onelap']['ok'] += 1
+                save_xoss_sync_state(state)
+            else:
+                summary['onelap']['fail'] += 1
+
+    # 6.2 iGPSport：网页导入（批量，放在 OneLap 之后以保留 OneLap 的浏览器上下文）
+    if 'igpsport' in targets:
+        for activity, path, fmt in downloaded:
+            workout_id = activity['workout_id']
+            start_time = activity.get('start_time')
+            record = uploads_state.setdefault(workout_id, {})
+            if record.get('igpsport'):
+                continue
+
+            base = targets.get('igpsport')
+            if base and start_time and start_time <= base:
+                logger.info(f"[iGPSport] 跳过 {workout_id}（不晚于平台最新记录）")
+                summary['igpsport']['skip'] += 1
+                continue
+
+            igpsport_pending.append((activity, path))
+
+        if igpsport_pending:
+            try:
+                login_igpsport_browser(tab, IGPSPORT_ACCOUNT, IGPSPORT_PASSWORD)
+            except Exception as e:
+                logger.warning(f"iGPSport 上传前登录异常: {e}")
+
+            files = [path for _activity, path in igpsport_pending]
+            logger.info(f"[iGPSport] 批量上传 {len(files)} 个文件")
+            try:
+                upload_ok = upload_files_to_igpsport(tab, files)
+            except Exception as e:
+                logger.error(f"[iGPSport] 上传异常: {e}")
+                upload_ok = False
+
+            if upload_ok:
+                for activity, _path in igpsport_pending:
+                    uploads_state.setdefault(activity['workout_id'], {})['igpsport'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    summary['igpsport']['ok'] += 1
+            else:
+                summary['igpsport']['fail'] += len(igpsport_pending)
+            save_xoss_sync_state(state)
+
+    save_xoss_sync_state(state)
+
+    logger.info("=" * 70)
+    logger.info("行者(XOSS) 数据源同步完成")
+    logger.info(f"  OneLap   : 成功 {summary['onelap']['ok']} / 跳过 {summary['onelap']['skip']} / 失败 {summary['onelap']['fail']}")
+    logger.info(f"  iGPSport : 成功 {summary['igpsport']['ok']} / 跳过 {summary['igpsport']['skip']} / 失败 {summary['igpsport']['fail']}")
+    logger.info("=" * 70)
+    return True
+
+
+# === 无浏览器纯 HTTP 试运行：data_source=xoss + login_mode=http + dry_run ===
+if DATA_SOURCE == 'xoss' and XOSS_LOGIN_MODE == 'http' and XOSS_DRY_RUN:
+    logger.info("=" * 70)
+    logger.info("[纯 HTTP 试运行] 不启动浏览器、不需要第三方依赖")
+    logger.info("=" * 70)
+    http_dry_run_ok = False
+    try:
+        http_dry_run_ok = run_xoss_source_pipeline(None)
+    except Exception as e:
+        logger.critical(f"纯 HTTP 试运行异常: {e}", exc_info=True)
+    sys.exit(0 if http_dry_run_ok else 1)
+
 # 获取屏幕尺寸并计算窗口大小
 try:
     import tkinter as tk
@@ -3091,6 +3544,15 @@ except Exception as e:
     right_position = 960
 
 # 初始化浏览器选项
+if not DRISSIONPAGE_AVAILABLE:
+    logger.critical("缺少 DrissionPage，无法启动浏览器，请执行: pip install -r requirements.txt")
+    logger.critical(
+        "提示：若只想验证行者数据源，可在 settings.ini 中设置 "
+        "[sync] data_source = xoss、[xoss] login_mode = http、[xoss] dry_run = true，"
+        "这样无需浏览器即可运行。"
+    )
+    sys.exit(1)
+
 options = ChromiumOptions()
 options.incognito()  # 启用匿名模式
 
@@ -3126,6 +3588,21 @@ logger.info(f"[DEBUG] ChromiumPage 已启动，当前URL: {getattr(tab, 'url', '
 # # 测试上传文件 读取文件夹下所有文件
 # valid_files = [f for f in os.listdir(STORAGE_DIR) if f.endswith('.fit') or f.endswith('.gpx')]
 # upload_success = upload_files_to_giant(tab, valid_files)
+
+# === 数据源分支：data_source = xoss 时，改走“行者 → 目标平台”流程 ===
+if DATA_SOURCE == 'xoss':
+    xoss_pipeline_ok = False
+    try:
+        xoss_pipeline_ok = run_xoss_source_pipeline(tab)
+    except Exception as e:
+        logger.critical(f"行者数据源同步流程异常: {e}", exc_info=True)
+    finally:
+        logger.info("===== 行者数据源任务结束，关闭浏览器 =====")
+        try:
+            tab.close()
+        except Exception:
+            pass
+    sys.exit(0 if xoss_pipeline_ok else 1)
 
 # === 步骤1：先登录顽鹿获取认证上下文 ===
 logger.info("===== 步骤1：登录顽鹿平台 =====")

@@ -1,7 +1,8 @@
-﻿# SyncOnelapToXoss 使用说明
+# SyncOnelapToXoss 使用说明
 
-本工具支持两类同步方向：
+本工具支持三类同步方向：
 - OneLap → 其他平台（行者 / 捷安特 / iGPSport / Garmin / Strava）
+- 行者(XOSS) → OneLap / iGPSport（行者为数据源，新增）
 - iGPSport → OneLap（反向增量补录）
 
 ## Windows（打包版）快速开始
@@ -16,6 +17,7 @@
    - 若同步到 Garmin：将 [garmin] enable_sync = true，并填写 Garmin Connect 中国区账号密码
    - 若启用 iGPSport → OneLap：将 [igpsport_to_onelap] enable = true
    - 若只想全量下载 OneLap：将 [sync] onelap_full_sync = true
+   - 若要把行者当作数据源：将 [sync] data_source = xoss（详见场景 F）
 
 3) 填写账号密码
    - OneLap 必填：[onelap] username/password
@@ -90,6 +92,42 @@ strategy = time_based
 
 说明：
 - mode=auto：优先增量补录；当 OneLap 为空或无法获取基准时会自动退化为更大范围同步。
+
+### 场景 F：行者(XOSS) → OneLap / iGPSport（行者为数据源）
+
+用途：主力记录在行者，需要把行者的骑行记录补录到 OneLap 与/或 iGPSport。
+
+```ini
+[sync]
+data_source = xoss
+
+[xoss]
+username = 行者手机号
+password = 行者密码
+time_offset_hours = 8
+prefer_fit = true
+dry_run = false
+login_mode = auto
+
+[onelap]
+username = 顽鹿账号
+password = 顽鹿密码
+
+[igpsport]
+username = iGPSport账号
+password = iGPSport密码
+enable_sync = true
+```
+
+说明：
+- 设为 xoss 后，程序不再以 OneLap 为下载源，而是登录行者 → 导出 Fit → 上传到 OneLap / iGPSport。
+- 首次使用建议先把 [xoss] dry_run 设为 true：程序只登录行者并下载记录到 downloads/xoss，不上传任何数据；
+  此时即使还没配好 OneLap / iGPSport 也能验证（无基准时只取最近 10 条）。确认下载的时间、距离、文件都正常后再改为 false。
+- 行者的“导出Fit”必须该记录来自设备（详情里 equipment_info 非空）；否则只会尝试 GPX，而 GPX 不能直传 OneLap。
+- 增量：以两个目标平台最新记录时间中更早的一个作为下载下限，逐平台判断是否跳过。
+- 去重：成功记录写入 xoss_sync_state.json，重复运行不会重复上传。
+- 两个目标平台都读不到基准时间时程序会终止，确认要全量同步时设置 [sync] onelap_full_sync = true。
+- 排查接口问题可运行：python xoss_source_probe.py --cookie "sessionid=xxxx"
 
 ## 下载与文件目录
 

@@ -7,6 +7,7 @@
 settings.local.ini
 strava_upload_state.json
 onelap_download_state.json
+xoss_sync_state.json
 
 # Python 缓存文件
 __pycache__/
@@ -32,6 +33,7 @@ downloads/
 download_igps/
 incremental_sync/
 incremental_test/
+xoss_probe_out/
 /tmp/
 *.tmp
 *.log
@@ -62,3 +64,6 @@ Thumbs.db
 
 # 项目配置文件 
 settings.ini
+# DrissionPage 运行时生成的浏览器用户数据目录（不可提交）
+DrissionPage/
+tmp*/
